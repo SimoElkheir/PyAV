@@ -87,17 +87,27 @@ cdef class Stream(object):
         if self.container.ptr.iformat:
 
             # Find the codec.
-            self._codec = lib.avcodec_find_decoder(self._codec_context.codec_id)
+            # FFMPEG doesn't by default use codecs from external libraries
+            # (e.g. *_cuvid) for decoding, so we need to select correct ones by name.
+            # If it's needed to add HW acceleration support for other formats,
+            # add them here.
+            h264_id = lib.avcodec_find_decoder_by_name('h264').id
+            h265_id = lib.avcodec_find_decoder_by_name('hevc').id
+            my_id = self._codec_context.codec_id
+            if container.hwaccel and my_id == h264_id:
+                self._codec = lib.avcodec_find_decoder_by_name('h264_cuvid')
+            elif container.hwaccel and my_id == h265_id:
+                self._codec = lib.avcodec_find_decoder_by_name('hevc_cuvid')
+            else:
+                self._codec = lib.avcodec_find_decoder(self._codec_context.codec_id)
             if not self._codec:
-                # TODO: Setup a dummy CodecContext.
-                self.codec_context = None
-                return
+                raise RuntimeError('Cannot find codec')
 
         # This is an output container!
         else:
             self._codec = self._codec_context.codec
 
-        self.codec_context = wrap_codec_context(self._codec_context, self._codec, False)
+        self.codec_context = wrap_codec_context(self._codec_context, self._codec, False, container.hwaccel)
         self.codec_context.stream_index = stream.index
 
     def __repr__(self):
